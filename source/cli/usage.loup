@@ -1,28 +1,31 @@
 @mode(host.dual)
 
-from appinfo import (APP_NAME, APP_VERSION, APP_SUMMARY);
-from cli.args import (DEFAULT_GREETING);
+from appinfo import (APP_NAME, APP_VERSION);
 
+# The text of `dir /?`: a short summary of this recreation's syntax and
+# switches.
 pub func usage(): string {
     let lines = [
-        i"usage: {$ APP_NAME $} [OPTIONS] COMMAND [ARGS...]",
+        "List the files and subdirectories of a directory.",
         "",
-        APP_SUMMARY,
+        "DIR [path][pattern] [/A[[:]attrs]] [/B] [/C | /-C] [/D] [/L] [/O[[:]order]]",
+        "    [/S] [/W] [/N] [/P] [/Q] [/R] [/T[[:]field]] [/X] [/4]",
         "",
-        "Commands:",
-        "  hello [NAME]          Print a greeting (NAME defaults to 'world')",
-        "  help                  Show this help",
-        "",
-        "Options:",
-        i"  -g, --greeting TEXT   Greeting used by 'hello' (default: {$ DEFAULT_GREETING $})",
-        "      --shout           Print the greeting in upper case",
-        "  -v, --verbose         Print diagnostic messages to stderr",
-        "  -h, --help            Show this help and exit",
-        "  -V, --version         Show the version and exit",
+        "  path, pattern  What to list: a directory, a file, or a name with * and ?.",
+        "  /A[attrs]      Filter by attribute: D = directories, -D = files.",
+        "  /B             Names only, without header or totals.",
+        "  /C, /-C        Group digits with commas (the default), or not.",
+        "  /D             Like /W, ordered down the columns.",
+        "  /L             Print names in lower case.",
+        "  /O[order]      Sort: N name, E extension, S size, G folders first;",
+        "                 a - before a letter reverses it. /O alone means /OGN.",
+        "  /S             Include every subdirectory.",
+        "  /W             Several names per line.",
+        "  /N /P /Q /R /T /X /4  Accepted for compatibility; they change nothing.",
     ];
     return lines.join("\n");
 }
 
 pub func version_line(): string {
-    return i"{$ APP_NAME $} {$ APP_VERSION $}";
+    return i"{$ APP_NAME $} (loup-cmd-{$ APP_NAME $}) {$ APP_VERSION $}";
 }

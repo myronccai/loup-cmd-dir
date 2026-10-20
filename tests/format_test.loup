@@ -1,0 +1,66 @@
+@mode(host.dual)
+
+# Tests for the listing layout (commands/format.loup).
+
+from debug.assert import (expect, expectEq);
+from commands.entries import (make_entry);
+from commands.format import (group_digits, pad_left, pad_right, long_line, wide_lines,
+    header_lines, files_line, dirs_line, total_header_lines, DATE_TIME_BLANK);
+
+func test_group_digits(): void {
+    expectEq(group_digits(0, true), "0", "zero");
+    expectEq(group_digits(999, true), "999", "three digits");
+    expectEq(group_digits(1000, true), "1,000", "four digits");
+    expectEq(group_digits(1234567, true), "1,234,567", "seven digits");
+    expectEq(group_digits(123456789012, true), "123,456,789,012", "twelve digits");
+    expectEq(group_digits(1234567, false), "1234567", "/-C");
+}
+
+func test_padding(): void {
+    expectEq(pad_left("7", 3), "  7", "left");
+    expectEq(pad_right("7", 3), "7  ", "right");
+    expectEq(pad_left("1234", 3), "1234", "never cut");
+}
+
+func test_long_lines(): void {
+    expectEq(DATE_TIME_BLANK.len(), 20, "date and time columns");
+    let dir_line = long_line(make_entry("sub", true, 0), true, false);
+    expectEq(dir_line, DATE_TIME_BLANK + "    <DIR>          sub", "directory");
+    let file_line = long_line(make_entry("Big.BIN", false, 1234567), true, false);
+    expectEq(file_line, DATE_TIME_BLANK + "         1,234,567 Big.BIN", "file");
+    expectEq(file_line.len(), 39 + 7, "the name starts in column 40");
+    expectEq(long_line(make_entry("Big.BIN", false, 5), true, true), DATE_TIME_BLANK + "                 5 big.bin", "/L");
+}
+
+func test_summary_lines(): void {
+    expectEq(files_line(2, 1234, true), "               2 File(s)          1,234 bytes", "files");
+    expectEq(dirs_line(3, true), "               3 Dir(s)", "dirs");
+    expectEq(files_line(1000, 1000, false), "            1000 File(s)           1000 bytes", "/-C");
+    expectEq(header_lines("\\tmp\\x").join("|"), "| Directory of \\tmp\\x|", "header");
+    expectEq(total_header_lines().join("|"), "|     Total Files Listed:", "total");
+}
+
+func test_wide_by_row_and_column(): void {
+    let entries = [
+        make_entry(".", true, 0),
+        make_entry("a.txt", false, 1),
+        make_entry("bb", false, 1),
+        make_entry("sub", true, 0),
+        make_entry("zz.log", false, 1),
+    ];
+    # The longest name is zz.log (6): columns of 7; 30 / 6 = 5 columns, but
+    # 6 * 5 + 5 >= 30 leaves no room for the spaces, so 4.
+    let rows = wide_lines(entries, 30, false, false);
+    expectEq(rows.len(), 2, "two rows");
+    expectEq(rows[0], "[.]    a.txt  bb     [sub]  ", "first row");
+    expectEq(rows[1], "zz.log ", "second row");
+    let cols = wide_lines(entries, 30, true, false);
+    expectEq(cols[0], "[.]    bb     zz.log ", "down the columns");
+    expectEq(cols[1], "a.txt  [sub]  ", "second row");
+}
+
+func test_wide_narrow_screen(): void {
+    let rows = wide_lines([make_entry("abcdef", false, 1), make_entry("x", false, 1)], 4, false, false);
+    expectEq(rows.len(), 2, "at least one column");
+    expect(rows[0].startsWith("abcdef"), "names are not cut");
+}

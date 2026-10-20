@@ -1,0 +1,65 @@
+@mode(host.dual)
+
+# Tests for the attribute filter and the sort orders (commands/entries.loup).
+
+from debug.assert import (expect, expectEq);
+from commands.entries import (Entry, make_entry, attr_matches, extension_of, compare_entries,
+    sort_entries);
+
+func names(entries: list[Entry]): string {
+    var out: list[string] = [];
+    for (e in entries) {
+        out.push(e.name);
+    }
+    return out.join(",");
+}
+
+func sample(): list[Entry] {
+    return [
+        make_entry("a.txt", false, 30),
+        make_entry("B.log", false, 10),
+        make_entry("c", false, 20),
+        make_entry("docs", true, 0),
+        make_entry("e.TXT", false, 10),
+        make_entry("src", true, 0),
+    ];
+}
+
+func test_attr_matches(): void {
+    expect(attr_matches("", true) and attr_matches("", false), "no filter");
+    expect(attr_matches("D", true) and !attr_matches("D", false), "D");
+    expect(!attr_matches("-D", true) and attr_matches("-D", false), "-D");
+    expect(!attr_matches("H", false), "nothing is hidden");
+    expect(attr_matches("-H", false), "everything is not hidden");
+    expect(attr_matches("D-H", true) and !attr_matches("D-H", false), "D-H");
+}
+
+func test_extension_of(): void {
+    expectEq(extension_of("a.txt"), "txt", "simple");
+    expectEq(extension_of("a.tar.gz"), "gz", "last dot");
+    expectEq(extension_of("README"), "", "none");
+    expectEq(extension_of(".bashrc"), "bashrc", "leading dot");
+    expectEq(extension_of(".."), "", "dot dot");
+}
+
+func test_compare_entries(): void {
+    let a = make_entry("a.txt", false, 30);
+    let d = make_entry("docs", true, 0);
+    expect(compare_entries(a, d, "N") < 0, "by name");
+    expect(compare_entries(a, d, "G") > 0, "directories first");
+    expect(compare_entries(a, d, "-G") < 0, "directories last");
+    expect(compare_entries(a, a, "NSEG") == 0, "equal");
+    expect(compare_entries(a, d, "D") == 0, "no dates");
+}
+
+func test_sort_orders(): void {
+    let s = sample();
+    expectEq(names(sort_entries(s, "")), "a.txt,B.log,c,docs,e.TXT,src", "no /O keeps the order");
+    expectEq(names(sort_entries(s, "-N")), "src,e.TXT,docs,c,B.log,a.txt", "reverse name");
+    expectEq(names(sort_entries(s, "GN")), "docs,src,a.txt,B.log,c,e.TXT", "directories first");
+    expectEq(names(sort_entries(s, "-GN")), "a.txt,B.log,c,e.TXT,docs,src", "directories last");
+    expectEq(names(sort_entries(s, "E")), "c,docs,src,B.log,a.txt,e.TXT", "by extension, stable");
+    expectEq(names(sort_entries(s, "S")), "docs,src,B.log,e.TXT,c,a.txt", "by size, stable");
+    expectEq(names(sort_entries(s, "-S")), "a.txt,c,B.log,e.TXT,docs,src", "largest first");
+    expectEq(names(sort_entries(s, "G-S")), "docs,src,a.txt,c,B.log,e.TXT", "two keys");
+}

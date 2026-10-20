@@ -1,0 +1,336 @@
+@mode(host.dual)
+
+# dir: lists the entries of directories in the Windows format. Operands
+# name a directory (list its contents), a file, or a wildcard pattern in a
+# directory; consecutive operands in the same directory share one block, as
+# in cmd. `render` builds every output line as a value; only `run_dir`
+# prints.
+
+from appinfo import (EXIT_OK, EXIT_FAILURE);
+from cli.args import (Options);
+from commands.entries import (Entry, make_entry, attr_matches, sort_entries);
+from commands.format import (DEFAULT_WIDTH, long_line, wide_lines, header_lines, files_line,
+    dirs_line, total_header_lines, shown_name);
+from io.fs import (isDir, isFile, listDir, readBytes);
+from win.messages import (MSG_FILE_NOT_FOUND_SHORT, MSG_INVALID_NAME, MSG_PATH_NOT_FOUND);
+from win.paths import (display_path, fs_path, is_absolute_path, join_path, path_components,
+    split_path, strip_trailing_separators);
+from win.switches import (parse_int_value);
+from win.wildcard import (has_wildcards, sort_names, walk_dirs, wild_match, wildcard_in_directory);
+
+# What one or more consecutive operands ask for: the entries of `dir` that
+# match any of `patterns`, or an error message for the operand.
+pub struct Group {
+    pub dir: string;              # fs form; "" is the current directory
+    pub patterns: list[string];
+    pub error: string;            # "" or the message to print
+}
+
+func make_group(dir: string, patterns: list[string], error: string): Group {
+    return Group(dir = dir, patterns = patterns, error = error);
+}
+
+# One line of output, for standard output or standard error.
+pub struct OutLine {
+    pub err: bool;
+    pub text: string;
+}
+
+func out_line(text: string): OutLine {
+    return OutLine(err = false, text = text);
+}
+
+func err_line(text: string): OutLine {
+    return OutLine(err = true, text = text);
+}
+
+# Everything dir prints, in order, and its exit status.
+pub struct Report {
+    pub lines: list[OutLine];
+    pub status: int;
+}
+
+# The directory and pattern an operand names: an existing directory lists
+# everything in it (`*`); anything else is a name or pattern in its parent.
+pub func plan_groups(operands: list[string]): list[Group] {
+    var groups: list[Group] = [];
+    var ops: list[string] = [];
+    for (op in operands) {
+        ops.push(op);
+    }
+    if (ops.len() == 0) {
+        ops.push("*");
+    }
+    for (op in ops) {
+        if (wildcard_in_directory(op)) {
+            let none: list[string] = [];
+            groups.push(make_group(fs_path(op), none, MSG_INVALID_NAME));
+            continue;
+        }
+        let p = fs_path(op);
+        let stripped = strip_trailing_separators(p);
+        var dir = "";
+        var pattern = "*";
+        if (stripped.len() > 0 and !has_wildcards(stripped) and isDir(stripped)) {
+            dir = stripped;
+        } else {
+            let parts = split_path(p);
+            dir = parts.dir;
+            if (parts.name.len() > 0) {
+                pattern = parts.name;
+            }
+        }
+        if (dir == ".") {
+            dir = "";
+        }
+        if (dir.len() > 0 and !isDir(dir)) {
+            let none: list[string] = [];
+            groups.push(make_group(dir, none, MSG_PATH_NOT_FOUND));
+            continue;
+        }
+        let last = groups.len() - 1;
+        if (last >= 0 and groups[last].error.len() == 0 and groups[last].dir == dir) {
+            var patterns: list[string] = [];
+            for (old in groups[last].patterns) {
+                patterns.push(old);
+            }
+            patterns.push(pattern);
+            groups[last] = make_group(dir, patterns, "");
+        } else {
+            groups.push(make_group(dir, [pattern], ""));
+        }
+    }
+    return groups;
+}
+
+# `path` with `.` and `..` resolved and duplicate separators removed. The
+# path must be absolute.
+pub func normalize_absolute(path: string): string {
+    var stack: list[string] = [];
+    for (part in path_components(path)) {
+        if (part == ".") {
+            continue;
+        }
+        if (part == "..") {
+            if (stack.len() > 0) {
+                stack.pop();
+            }
+            continue;
+        }
+        stack.push(part);
+    }
+    return "/" + stack.join("/");
+}
+
+# The absolute form of `dir` (fs form, "" = current directory) against
+# `cwd`. Without a known `cwd`, a relative `dir` is returned as typed.
+pub func absolute_dir(dir: string, cwd: string): string {
+    if (is_absolute_path(dir)) {
+        return normalize_absolute(fs_path(dir));
+    }
+    if (cwd.len() == 0) {
+        return if (dir.len() == 0) { "." } else { dir };
+    }
+    return normalize_absolute(join_path(cwd, dir));
+}
+
+# Whether a name matches any of the patterns (Windows wildcard rules,
+# ignoring case).
+pub func matches_any(patterns: list[string], name: string): bool {
+    for (pattern in patterns) {
+        if (wild_match(pattern, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+# The entries of one directory that match the patterns and the /A filter:
+# `.` and `..` first (not in bare format, and not in the root directory),
+# then the rest in name order or the /O order. File sizes come from reading
+# the files; they are skipped in bare format unless /O sorts by size.
+pub func collect(dir: string, patterns: list[string], opts: Options, is_root: bool): list[Entry] {
+    let base = if (dir.len() == 0) { "." } else { dir };
+    var out: list[Entry] = [];
+    if (!isDir(base)) {
+        return out;
+    }
+    if (!opts.bare and !is_root and attr_matches(opts.attrs, true)) {
+        for (dot in [".", ".."]) {
+            if (matches_any(patterns, dot)) {
+                out.push(make_entry(dot, true, 0));
+            }
+        }
+    }
+    let need_size = !opts.bare or opts.order.index_of("S") >= 0;
+    var rest: list[Entry] = [];
+    for (name in sort_names(listDir(base))) {
+        if (name == "." or name == ".." or !matches_any(patterns, name)) {
+            continue;
+        }
+        let path = join_path(base, name);
+        let is_dir = isDir(path);
+        if (!is_dir and !isFile(path)) {
+            continue;
+        }
+        if (!attr_matches(opts.attrs, is_dir)) {
+            continue;
+        }
+        var size = 0;
+        if (!is_dir and need_size) {
+            size = readBytes(path).len();
+        }
+        rest.push(make_entry(name, is_dir, size));
+    }
+    for (e in sort_entries(rest, opts.order)) {
+        out.push(e);
+    }
+    return out;
+}
+
+# Builds the whole listing. `cwd` is the absolute current directory ("" if
+# unknown) and `width` the screen width for /W and /D.
+pub func render(opts: Options, cwd: string, width: int): Report {
+    var lines: list[OutLine] = [];
+    var status = EXIT_OK;
+    var blocks = 0;
+    var total_files = 0;
+    var total_dirs = 0;
+    var total_bytes = 0;
+    for (g in plan_groups(opts.operands)) {
+        if (g.error.len() > 0) {
+            lines.push(err_line(g.error));
+            status = EXIT_FAILURE;
+            continue;
+        }
+        var dirs: list[string] = [g.dir];
+        if (opts.recurse) {
+            dirs = walk_dirs(g.dir);
+        }
+        var found = 0;
+        for (d in dirs) {
+            let abs = absolute_dir(d, cwd);
+            let entries = collect(d, g.patterns, opts, abs == "/");
+            if (entries.len() == 0) {
+                if (!opts.recurse) {
+                    if (!opts.bare) {
+                        for (h in header_lines(display_path(abs))) {
+                            lines.push(out_line(h));
+                        }
+                    }
+                    lines.push(err_line(MSG_FILE_NOT_FOUND_SHORT));
+                    status = EXIT_FAILURE;
+                }
+                continue;
+            }
+            found += 1;
+            blocks += 1;
+            var files = 0;
+            var subdirs = 0;
+            var bytes = 0;
+            for (e in entries) {
+                if (e.is_dir) {
+                    subdirs += 1;
+                } else {
+                    files += 1;
+                    bytes += e.size;
+                }
+            }
+            total_files += files;
+            total_dirs += subdirs;
+            total_bytes += bytes;
+            if (opts.bare) {
+                for (e in entries) {
+                    let name = shown_name(e.name, opts.lower);
+                    if (opts.recurse) {
+                        lines.push(out_line(display_path(join_path(abs, name))));
+                    } else {
+                        lines.push(out_line(name));
+                    }
+                }
+                continue;
+            }
+            for (h in header_lines(display_path(abs))) {
+                lines.push(out_line(h));
+            }
+            if (opts.wide) {
+                for (w in wide_lines(entries, width, opts.by_column, opts.lower)) {
+                    lines.push(out_line(w));
+                }
+            } else {
+                for (e in entries) {
+                    lines.push(out_line(long_line(e, opts.separators, opts.lower)));
+                }
+            }
+            lines.push(out_line(files_line(files, bytes, opts.separators)));
+        }
+        if (opts.recurse and found == 0) {
+            lines.push(err_line(MSG_FILE_NOT_FOUND_SHORT));
+            status = EXIT_FAILURE;
+        }
+    }
+    if (!opts.bare and blocks > 0) {
+        if (opts.recurse or blocks > 1) {
+            for (t in total_header_lines()) {
+                lines.push(out_line(t));
+            }
+            lines.push(out_line(files_line(total_files, total_bytes, opts.separators)));
+        }
+        lines.push(out_line(dirs_line(total_dirs, opts.separators)));
+    }
+    return Report(lines = lines, status = status);
+}
+
+func same_names(a: string, b: string): bool {
+    let x = sort_names(listDir(a));
+    let y = sort_names(listDir(b));
+    if (x.len() != y.len()) {
+        return false;
+    }
+    for (i in 0..x.len()) {
+        if (x[i] != y[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+# The absolute current directory: $PWD when it plausibly is the current
+# directory (Loup 1.26.0 has no getcwd), else the output of `pwd`, else "".
+pub func current_dir(): string {
+    let pwd = env("PWD") ?? "";
+    if (pwd.startsWith("/") and isDir(pwd) and same_names(pwd, ".")) {
+        return pwd;
+    }
+    let r = exec(["pwd"]);
+    if (r.exit_code != 0) {
+        return "";
+    }
+    let text = r.stdout.to_string().trim();
+    if (text.startsWith("/")) {
+        return text;
+    }
+    return "";
+}
+
+# The screen width for /W and /D: $COLUMNS when it is a number, else 80.
+pub func screen_width(): int {
+    let text = env("COLUMNS") ?? "";
+    let n = parse_int_value(text) ?? 0;
+    if (n >= 10) {
+        return n;
+    }
+    return DEFAULT_WIDTH;
+}
+
+pub func run_dir(opts: Options): int {
+    let report = render(opts, current_dir(), screen_width());
+    for (line in report.lines) {
+        if (line.err) {
+            printErr(line.text);
+        } else {
+            println(line.text);
+        }
+    }
+    return report.status;
+}

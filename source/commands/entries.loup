@@ -1,0 +1,141 @@
+@mode(host.dual)
+
+# Directory entries as dir lists them: the /A attribute filter and the /O
+# sort orders. Pure functions; nothing here touches the file system.
+
+from win.wildcard import (compare_names);
+
+# One line of a listing.
+pub struct Entry {
+    pub name: string;
+    pub is_dir: bool;
+    pub size: int;       # bytes; 0 for directories
+}
+
+# Entries are built here only: a struct literal in another module gets a
+# different field layout in native builds of Loup 1.26.0.
+pub func make_entry(name: string, is_dir: bool, size: int): Entry {
+    return Entry(name = name, is_dir = is_dir, size = size);
+}
+
+# Whether an entry passes an /A value ("" = every entry). Only D
+# (directory) can be known on Linux; no entry has R, H, A, S, I, L or O, so
+# `/AH` shows nothing and `/A-H` shows everything.
+pub func attr_matches(spec: string, is_dir: bool): bool {
+    var negate = false;
+    for (ch in spec.toUpperCase()) {
+        if (ch == "-") {
+            negate = true;
+            continue;
+        }
+        let has = if (ch == "D") { is_dir } else { false };
+        if (has == negate) {
+            return false;
+        }
+        negate = false;
+    }
+    return true;
+}
+
+# The extension dir sorts by: the text after the last `.`, or "" for names
+# without one (and for `.` and `..`).
+pub func extension_of(name: string): string {
+    if (name == "." or name == "..") {
+        return "";
+    }
+    var i = name.len() - 1;
+    while (i >= 0) {
+        if (name.slice(i, i + 1) == ".") {
+            return name.slice(i + 1);
+        }
+        i -= 1;
+    }
+    return "";
+}
+
+func sign(n: int): int {
+    if (n < 0) {
+        return -1;
+    }
+    if (n > 0) {
+        return 1;
+    }
+    return 0;
+}
+
+# Compares two entries by one /O key: N name, E extension, S size, G
+# directories first, D date (unknown here: always equal).
+pub func compare_by_key(a: Entry, b: Entry, key: string): int {
+    if (key == "N") {
+        return sign(compare_names(a.name, b.name));
+    }
+    if (key == "E") {
+        # Ignoring case only: names with equal extensions stay in name order.
+        return sign(extension_of(a.name).toUpperCase().compareTo(extension_of(b.name).toUpperCase()));
+    }
+    if (key == "S") {
+        return sign(a.size - b.size);
+    }
+    if (key == "G") {
+        if (a.is_dir == b.is_dir) {
+            return 0;
+        }
+        return if (a.is_dir) { -1 } else { 1 };
+    }
+    return 0;
+}
+
+# Compares two entries by a whole /O value such as "GN" or "-S": each key
+# in turn, `-` reversing the key that follows it.
+pub func compare_entries(a: Entry, b: Entry, order: string): int {
+    var negate = false;
+    for (key in order) {
+        if (key == "-") {
+            negate = true;
+            continue;
+        }
+        let c = compare_by_key(a, b, key);
+        if (c != 0) {
+            return if (negate) { 0 - c } else { c };
+        }
+        negate = false;
+    }
+    return 0;
+}
+
+# Sorts entries by an /O value with a stable merge sort, so entries that
+# compare equal keep their name order. (Written by hand: a sort comparator
+# that captures a list of structs crashes native builds.)
+pub func sort_entries(entries: list[Entry], order: string): list[Entry] {
+    var items: list[Entry] = [];
+    for (e in entries) {
+        items.push(e);
+    }
+    if (order.len() == 0 or items.len() < 2) {
+        return items;
+    }
+    var width = 1;
+    while (width < items.len()) {
+        var merged: list[Entry] = [];
+        var lo = 0;
+        while (lo < items.len()) {
+            let mid = if (lo + width < items.len()) { lo + width } else { items.len() };
+            let hi = if (lo + 2 * width < items.len()) { lo + 2 * width } else { items.len() };
+            var i = lo;
+            var j = mid;
+            while (i < mid or j < hi) {
+                if (j >= hi or (i < mid and compare_entries(items[i], items[j], order) <= 0)) {
+                    merged.push(items[i]);
+                    i += 1;
+                } else {
+                    merged.push(items[j]);
+                    j += 1;
+                }
+            }
+            lo = hi;
+        }
+        items = merged;
+        width = width * 2;
+    }
+    return items;
+}

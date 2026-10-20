@@ -1,98 +1,138 @@
 @mode(host.dual)
 
-# Command-line parsing. Loup 1.26 has no CLI library, so arguments are
-# parsed by hand into an Options value.
-#
-# Grammar: [OPTIONS] COMMAND [OPERANDS...]
-#   Options may appear anywhere before `--`; everything after `--` is an
-#   operand. Value options accept `--name VALUE` and `--name=VALUE`.
+# Command-line parsing for dir, with the shared Windows switch parser
+# (win/switches.loup). A `/X` that is not one of dir's switches is a path,
+# so `/tmp` and `/apps` stay paths while `/ad` is `/A` with `D`.
 
-pub const DEFAULT_GREETING: string = "Hello";
+from win.messages import (msg_parameter_format);
+from win.switches import (SwitchSpec, flag, optional_value, parse_switches, switch_error_message);
+
+# The attribute letters dir accepts after /A (D R H A S I L O, each may be
+# prefixed with `-`), the sort keys after /O and the time fields after /T.
+pub const ATTR_LETTERS: string = "DRHASILO";
+pub const ORDER_LETTERS: string = "NSEDG";
+pub const TIME_LETTERS: string = "CAW";
 
 pub struct Options {
-    pub command: string;
-    pub operands: list[string];
     pub help: bool;
     pub version: bool;
-    pub verbose: bool;
-    pub shout: bool;
-    pub greeting: string;
+    pub bare: bool;          # /B
+    pub recurse: bool;       # /S
+    pub wide: bool;          # /W or /D
+    pub by_column: bool;     # /D: wide, sorted down the columns
+    pub lower: bool;         # /L
+    pub separators: bool;    # /C (the default); /-C turns it off
+    pub attrs: string;       # /A value, upper case ("" = every entry)
+    pub order: string;       # /O value, upper case ("" = no /O)
+    pub operands: list[string];
 }
 
-pub func parse_args(argv: list[string]): Result[Options, string] {
-    var command = "";
-    var operands: list[string] = [];
-    var help = false;
-    var version = false;
-    var verbose = false;
-    var shout = false;
-    var greeting = DEFAULT_GREETING;
-    var only_operands = false;
+# The switches dir declares. /N, /P, /Q, /R, /T, /X and /4 are accepted and
+# have no effect (see the README).
+pub func dir_switches(): list[SwitchSpec] {
+    return [
+        optional_value("A", ATTR_LETTERS + "-"),
+        flag("B"),
+        flag("C"),
+        flag("-C"),
+        flag("D"),
+        flag("L"),
+        flag("N"),
+        optional_value("O", ORDER_LETTERS + "-"),
+        flag("P"),
+        flag("Q"),
+        flag("R"),
+        flag("S"),
+        optional_value("T", TIME_LETTERS),
+        flag("W"),
+        flag("X"),
+        flag("4"),
+    ];
+}
 
-    var i = 0;
-    while (i < argv.len()) {
-        let arg = argv[i];
-        i += 1;
-
-        if (only_operands or arg == "-" or !arg.startsWith("-")) {
-            if (command.is_empty()) {
-                command = arg;
-            } else {
-                operands.push(arg);
+# Whether a /A or /O value is made of `letters`, each optionally preceded by
+# one `-`.
+pub func valid_letters(value: string, letters: string): bool {
+    var pending_minus = false;
+    for (ch in value.toUpperCase()) {
+        if (ch == "-") {
+            if (pending_minus) {
+                return false;
             }
-            continue;
-        }
-        if (arg == "--") {
-            only_operands = true;
-            continue;
-        }
-
-        # Split `--name=value` into its name and inline value.
-        var name = arg;
-        var inline_value: Option[string] = None;
-        if (arg.startsWith("--") and arg.contains("=")) {
-            let parts = arg.split("=");
-            name = parts[0];
-            inline_value = Some(parts.slice(1).join("="));
-        }
-
-        if (name == "-g" or name == "--greeting") {
-            match inline_value {
-                Some(v) => { greeting = v; },
-                None => {
-                    if (i >= argv.len()) {
-                        return Err(i"option '{$ name $}' requires a value");
-                    }
-                    greeting = argv[i];
-                    i += 1;
-                },
-            }
-            continue;
-        }
-
-        if (inline_value.is_some()) {
-            return Err(i"option '{$ name $}' does not take a value");
-        }
-        if (name == "-h" or name == "--help") {
-            help = true;
-        } else if (name == "-V" or name == "--version") {
-            version = true;
-        } else if (name == "-v" or name == "--verbose") {
-            verbose = true;
-        } else if (name == "--shout") {
-            shout = true;
+            pending_minus = true;
+        } else if (letters.index_of(ch) >= 0) {
+            pending_minus = false;
         } else {
-            return Err(i"unknown option '{$ name $}'");
+            return false;
+        }
+    }
+    return !pending_minus;
+}
+
+# The statement form of `match` (arms that return) is deliberate: a match
+# expression whose arms build new values returns freed memory natively.
+pub func parse_args(argv: list[string]): Result[Options, string] {
+    let parsed = match parse_switches(argv, dir_switches()) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(switch_error_message(e));
+        },
+    };
+
+    var bare = false;
+    var recurse = false;
+    var wide = false;
+    var by_column = false;
+    var lower = false;
+    var separators = true;
+    var attrs = "";
+    var order = "";
+    for (sw in parsed.switches) {
+        let value = sw.value.toUpperCase();
+        if (sw.name == "A") {
+            if (!valid_letters(value, ATTR_LETTERS)) {
+                return Err(msg_parameter_format(sw.value));
+            }
+            attrs = value;
+        } else if (sw.name == "O") {
+            if (!valid_letters(value, ORDER_LETTERS)) {
+                return Err(msg_parameter_format(sw.value));
+            }
+            # /O alone: directories first, then by name.
+            order = if (value.len() == 0) { "GN" } else { value };
+        } else if (sw.name == "T") {
+            if (!valid_letters(value, TIME_LETTERS) or value.index_of("-") >= 0) {
+                return Err(msg_parameter_format(sw.value));
+            }
+        } else if (sw.name == "B") {
+            bare = true;
+        } else if (sw.name == "S") {
+            recurse = true;
+        } else if (sw.name == "W") {
+            wide = true;
+        } else if (sw.name == "D") {
+            wide = true;
+            by_column = true;
+        } else if (sw.name == "L") {
+            lower = true;
+        } else if (sw.name == "C") {
+            separators = true;
+        } else if (sw.name == "-C") {
+            separators = false;
         }
     }
 
     return Ok(Options(
-        command = command,
-        operands = operands,
-        help = help,
-        version = version,
-        verbose = verbose,
-        shout = shout,
-        greeting = greeting,
+        help = parsed.help,
+        version = parsed.version,
+        bare = bare,
+        recurse = recurse,
+        wide = wide,
+        by_column = by_column,
+        lower = lower,
+        separators = separators,
+        attrs = attrs,
+        order = order,
+        operands = parsed.operands,
     ));
 }

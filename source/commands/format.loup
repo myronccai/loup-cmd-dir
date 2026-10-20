@@ -1,0 +1,150 @@
+@mode(host.dual)
+
+# The text of a dir listing: entry lines in the long and wide formats, the
+# "Directory of" header and the File(s) / Dir(s) summary lines, laid out in
+# Windows' columns. Pure functions.
+
+from commands.entries import (Entry);
+
+# Where the date and time would be: "MM/DD/YYYY  HH:MM AM" is 20 columns.
+# Loup 1.26.0 has no stat(), so the columns are left blank.
+pub const DATE_TIME_BLANK: string = "                    ";
+
+# The default screen width for /W and /D.
+pub const DEFAULT_WIDTH: int = 80;
+
+# `count` spaces.
+pub func spaces(count: int): string {
+    var parts: list[string] = [];
+    for (i in 0..count) {
+        parts.push(" ");
+    }
+    return parts.join("");
+}
+
+# `text` right-aligned in `width` columns (never cut).
+pub func pad_left(text: string, width: int): string {
+    let n = text.len();
+    if (n >= width) {
+        return text;
+    }
+    return spaces(width - n) + text;
+}
+
+# `text` left-aligned in `width` columns (never cut).
+pub func pad_right(text: string, width: int): string {
+    let n = text.len();
+    if (n >= width) {
+        return text;
+    }
+    return text + spaces(width - n);
+}
+
+# A count or size as dir prints it: `1,234,567` with separators (/C, the
+# default), `1234567` without (/-C).
+pub func group_digits(n: int, separators: bool): string {
+    let digits = str(n);
+    if (!separators or digits.len() <= 3) {
+        return digits;
+    }
+    var parts: list[string] = [];
+    let first = digits.len() % 3;
+    if (first > 0) {
+        parts.push(digits.slice(0, first));
+    }
+    var i = first;
+    while (i < digits.len()) {
+        parts.push(digits.slice(i, i + 3));
+        i += 3;
+    }
+    return parts.join(",");
+}
+
+# The name as shown: lower case with /L.
+pub func shown_name(name: string, lower: bool): string {
+    return if (lower) { name.toLowerCase() } else { name };
+}
+
+# One entry in the long format: date and time (blank), then `<DIR>` or the
+# size right-aligned so that it ends in column 38, then the name.
+pub func long_line(e: Entry, separators: bool, lower: bool): string {
+    var field = "";
+    if (e.is_dir) {
+        field = pad_right("<DIR>", 14);
+    } else {
+        field = pad_left(group_digits(e.size, separators), 14);
+    }
+    return DATE_TIME_BLANK + "    " + field + " " + shown_name(e.name, lower);
+}
+
+# The name of an entry in the wide format: directories in brackets.
+pub func wide_name(e: Entry, lower: bool): string {
+    let name = shown_name(e.name, lower);
+    if (e.is_dir) {
+        return "[" + name + "]";
+    }
+    return name;
+}
+
+# The wide format (/W, or /D sorted down the columns): as many columns of
+# (longest name + 1) characters as fit in `width`, keeping a space between
+# columns. Every name is padded, also the last one on a line.
+pub func wide_lines(entries: list[Entry], width: int, by_column: bool, lower: bool): list[string] {
+    var lines: list[string] = [];
+    let count = entries.len();
+    if (count == 0) {
+        return lines;
+    }
+    var names: list[string] = [];
+    var longest = 1;
+    for (e in entries) {
+        let name = wide_name(e, lower);
+        names.push(name);
+        if (name.len() > longest) {
+            longest = name.len();
+        }
+    }
+    var columns = width / longest;
+    if (longest * columns + columns >= width) {
+        columns -= 1;
+    }
+    if (columns < 1) {
+        columns = 1;
+    }
+    let rows = (count + columns - 1) / columns;
+    for (row in 0..rows) {
+        var parts: list[string] = [];
+        for (col in 0..columns) {
+            let index = if (by_column) { col * rows + row } else { row * columns + col };
+            if (index >= count) {
+                break;
+            }
+            parts.push(pad_right(names[index], longest + 1));
+        }
+        lines.push(parts.join(""));
+    }
+    return lines;
+}
+
+# The header of one directory's block: a blank line, ` Directory of X` and
+# a blank line. `display` is already in Windows form (`\tmp\x`).
+pub func header_lines(display: string): list[string] {
+    return ["", " Directory of " + display, ""];
+}
+
+# `               2 File(s)          1,234 bytes`
+pub func files_line(count: int, total: int, separators: bool): string {
+    return pad_left(group_digits(count, separators), 16) + " File(s) "
+        + pad_left(group_digits(total, separators), 14) + " bytes";
+}
+
+# `               3 Dir(s)`: Windows adds the free space of the volume,
+# which Loup 1.26.0 cannot query.
+pub func dirs_line(count: int, separators: bool): string {
+    return pad_left(group_digits(count, separators), 16) + " Dir(s)";
+}
+
+# The lines that introduce the grand total after several blocks (or /S).
+pub func total_header_lines(): list[string] {
+    return ["", "     Total Files Listed:"];
+}

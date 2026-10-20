@@ -1,64 +1,74 @@
 @mode(host.dual)
 
 from debug.assert import (expect, expectEq);
-from cli.args import (parse_args, DEFAULT_GREETING);
+from cli.args import (parse_args, valid_letters, ATTR_LETTERS, ORDER_LETTERS);
 
 func test_no_arguments(): void {
     let none: list[string] = [];
     let opts = parse_args(none).unwrap();
-    expectEq(opts.command, "", "no command");
     expectEq(opts.operands.len(), 0, "no operands");
-    expectEq(opts.greeting, DEFAULT_GREETING, "default greeting");
-    expect(!opts.help and !opts.version and !opts.verbose and !opts.shout, "no flags set");
+    expect(!opts.help and !opts.version and !opts.bare and !opts.recurse, "no flags");
+    expect(!opts.wide and !opts.by_column and !opts.lower, "no format flags");
+    expect(opts.separators, "separators by default");
+    expect(opts.attrs == "" and opts.order == "", "no /A or /O");
 }
 
-func test_command_and_operands(): void {
-    let opts = parse_args(["hello", "Ann"]).unwrap();
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands.len(), 1, "one operand");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_flags_in_any_case_and_prefix(): void {
+    let opts = parse_args(["/b", "-S", "/W", "-l"]).unwrap();
+    expect(opts.bare and opts.recurse and opts.wide and opts.lower, "flags");
+    let d = parse_args(["/D"]).unwrap();
+    expect(d.wide and d.by_column, "/D is wide by column");
+    let combined = parse_args(["/S/B"]).unwrap();
+    expect(combined.recurse and combined.bare, "/S/B");
 }
 
-func test_flags_anywhere(): void {
-    let opts = parse_args(["-v", "hello", "--shout", "Ann"]).unwrap();
-    expect(opts.verbose, "verbose");
-    expect(opts.shout, "shout");
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_attribute_values(): void {
+    expect(parse_args(["/AD"]).unwrap().attrs == "D", "glued");
+    expect(parse_args(["/a:-d"]).unwrap().attrs == "-D", "colon, upper-cased");
+    expect(parse_args(["/A"]).unwrap().attrs == "", "bare /A");
+    expect(parse_args(["/AD", "/A-D"]).unwrap().attrs == "-D", "last one wins");
+}
+
+func test_order_values(): void {
+    expect(parse_args(["/O"]).unwrap().order == "GN", "/O alone is GN");
+    expect(parse_args(["/O-S"]).unwrap().order == "-S", "glued");
+    expect(parse_args(["/o:en"]).unwrap().order == "EN", "colon");
+}
+
+func test_separators(): void {
+    expect(!parse_args(["/-C"]).unwrap().separators, "/-C");
+    expect(parse_args(["/-C", "/C"]).unwrap().separators, "/C after /-C");
+}
+
+func test_bad_values(): void {
+    expect(parse_args(["/A:Z"]).is_err(), "bad attribute");
+    expect(parse_args(["/O:X"]).is_err(), "bad order");
+    expect(parse_args(["/O:-"]).is_err(), "lone minus");
+    expect(parse_args(["/T:Z"]).is_err(), "bad time field");
+    expectEq(parse_args(["/a:z"]).unwrap_err(), "Parameter format not correct - \"z\".", "message");
+}
+
+func test_paths_that_look_like_switches(): void {
+    let opts = parse_args(["/tmp", "/apps", "/opt", "-z", "/srv", "-x"]).unwrap();
+    expectEq(opts.operands.join(","), "/tmp,/apps,/opt,-z,/srv", "operands");
+    expectEq(opts.operands.len(), 5, "-x is /X, a switch");
+}
+
+func test_valid_letters(): void {
+    expect(valid_letters("", ATTR_LETTERS), "empty");
+    expect(valid_letters("D-H", ATTR_LETTERS), "letters and minus");
+    expect(!valid_letters("--D", ATTR_LETTERS), "double minus");
+    expect(!valid_letters("D-", ATTR_LETTERS), "trailing minus");
+    expect(valid_letters("-G-N", ORDER_LETTERS), "order");
+    expect(!valid_letters("Q", ORDER_LETTERS), "unknown key");
 }
 
 func test_help_and_version(): void {
+    expect(parse_args(["/?"]).unwrap().help, "/?");
+    expect(parse_args(["/W", "-?"]).unwrap().help, "-? with a switch");
     expect(parse_args(["--help"]).unwrap().help, "--help");
-    expect(parse_args(["-h"]).unwrap().help, "-h");
     expect(parse_args(["--version"]).unwrap().version, "--version");
-    expect(parse_args(["-V"]).unwrap().version, "-V");
-}
-
-func test_value_option_forms(): void {
-    expectEq(parse_args(["-g", "Hi"]).unwrap().greeting, "Hi", "-g VALUE");
-    expectEq(parse_args(["--greeting", "Hi"]).unwrap().greeting, "Hi", "--greeting VALUE");
-    expectEq(parse_args(["--greeting=a=b"]).unwrap().greeting, "a=b", "--greeting=VALUE keeps '='");
-}
-
-func test_double_dash_ends_options(): void {
-    let opts = parse_args(["hello", "--", "--shout"]).unwrap();
-    expect(!opts.shout, "--shout after -- is an operand");
-    expectEq(opts.operands[0], "--shout", "operand");
-}
-
-func test_lone_dash_is_operand(): void {
-    let opts = parse_args(["hello", "-"]).unwrap();
-    expectEq(opts.operands[0], "-", "operand");
-}
-
-func test_unknown_option(): void {
-    expectEq(parse_args(["--nope"]).unwrap_err(), "unknown option '--nope'", "error message");
-}
-
-func test_missing_value(): void {
-    expectEq(parse_args(["-g"]).unwrap_err(), "option '-g' requires a value", "error message");
-}
-
-func test_flag_with_value(): void {
-    expectEq(parse_args(["--shout=1"]).unwrap_err(), "option '--shout' does not take a value", "error message");
+    let ended = parse_args(["--", "/?", "/B"]).unwrap();
+    expect(!ended.help and !ended.bare, "after --");
+    expectEq(ended.operands.len(), 2, "operands after --");
 }

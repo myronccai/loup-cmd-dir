@@ -1,0 +1,120 @@
+@mode(host.dual)
+
+# Tests for planning and rendering listings (commands/dir.loup). The tests
+# build a small tree under build/tmp/ and render with a fixed current
+# directory, so no output is printed.
+
+from debug.assert import (expect, expectEq);
+from io.fs import (createDir, writeText, removeDir, isDir);
+from cli.args import (parse_args);
+from commands.dir import (OutLine, Report, plan_groups, normalize_absolute, absolute_dir,
+    matches_any, collect, render);
+from win.messages import (MSG_INVALID_NAME, MSG_PATH_NOT_FOUND);
+
+func make_tree(root: string): void {
+    if (isDir(root)) {
+        removeDir(root);
+    }
+    createDir(root + "/sub/deep");
+    writeText(root + "/a.txt", "alpha\n");
+    writeText(root + "/B.log", "bravo bravo\n");
+    writeText(root + "/sub/c.txt", "c\n");
+    writeText(root + "/sub/deep/d.txt", "dd\n");
+}
+
+func texts(report: Report, err: bool): string {
+    var out: list[string] = [];
+    for (line in report.lines) {
+        if (line.err == err) {
+            out.push(line.text);
+        }
+    }
+    return out.join("|");
+}
+
+func test_normalize_absolute(): void {
+    expectEq(normalize_absolute("/a/./b/../c//d/"), "/a/c/d", "dots and separators");
+    expectEq(normalize_absolute("/.."), "/", "above the root");
+    expectEq(absolute_dir("", "/home/me"), "/home/me", "current directory");
+    expectEq(absolute_dir("..", "/home/me"), "/home", "parent");
+    expectEq(absolute_dir("/x/y/..", "/home/me"), "/x", "absolute operand");
+    expectEq(absolute_dir("sub", ""), "sub", "unknown current directory");
+}
+
+func test_plan_groups(): void {
+    let root = "build/tmp/dir_plan";
+    make_tree(root);
+    let groups = plan_groups([root, root + "\\*.txt", root + "/B.log", root + "/sub/", root + "/no/x", root + "/s*/x"]);
+    expectEq(groups.len(), 4, "consecutive operands in one directory share a group");
+    expectEq(groups[0].dir, root, "directory operand");
+    expectEq(groups[0].patterns.join(","), "*,*.txt,B.log", "patterns");
+    expectEq(groups[1].dir, root + "/sub", "trailing separator");
+    expectEq(groups[2].error, MSG_PATH_NOT_FOUND, "missing directory");
+    expectEq(groups[3].error, MSG_INVALID_NAME, "wildcard in a directory");
+    let none: list[string] = [];
+    let current = plan_groups(none);
+    expectEq(current.len(), 1, "no operand");
+    expectEq(current[0].dir, "", "current directory");
+    expectEq(current[0].patterns[0], "*", "everything");
+    removeDir(root);
+}
+
+func test_matches_any(): void {
+    expect(matches_any(["*.txt", "*.log"], "A.LOG"), "second pattern, any case");
+    expect(!matches_any(["*.txt"], "a.log"), "no match");
+}
+
+func test_collect(): void {
+    let root = "build/tmp/dir_collect";
+    make_tree(root);
+    let all = collect(root, ["*"], parse_args(["/O-N"]).unwrap(), false);
+    var names: list[string] = [];
+    for (e in all) {
+        names.push(e.name);
+    }
+    expectEq(names.join(","), ".,..,sub,B.log,a.txt", "dots first, then the /O order");
+    expectEq(all[3].size, 12, "size from the file");
+    let files = collect(root, ["*"], parse_args(["/A-D", "/B"]).unwrap(), false);
+    expectEq(files.len(), 2, "/A-D and no dots in bare format");
+    let at_root = collect(root, ["*"], parse_args(["/AD"]).unwrap(), true);
+    expectEq(at_root.len(), 1, "no dots in the root directory");
+    removeDir(root);
+}
+
+func test_render_listing(): void {
+    let root = "build/tmp/dir_render";
+    make_tree(root);
+    let report = render(parse_args([root + "/*.txt"]).unwrap(), "/w", 80);
+    expectEq(report.status, 0, "status");
+    expectEq(texts(report, false),
+        "| Directory of \\w\\build\\tmp\\dir_render||"
+        + "                                     6 a.txt|"
+        + "               1 File(s)              6 bytes|"
+        + "               0 Dir(s)", "stdout");
+    expectEq(texts(report, true), "", "stderr");
+    removeDir(root);
+}
+
+func test_render_recursive_bare(): void {
+    let root = "build/tmp/dir_bare";
+    make_tree(root);
+    let report = render(parse_args(["/S", "/B", root + "\\*.TXT"]).unwrap(), "/w", 80);
+    expectEq(texts(report, false),
+        "\\w\\build\\tmp\\dir_bare\\a.txt|\\w\\build\\tmp\\dir_bare\\sub\\c.txt|"
+        + "\\w\\build\\tmp\\dir_bare\\sub\\deep\\d.txt", "full paths");
+    removeDir(root);
+}
+
+func test_render_not_found(): void {
+    let root = "build/tmp/dir_missing";
+    make_tree(root);
+    let report = render(parse_args([root + "/*.none"]).unwrap(), "/w", 80);
+    expectEq(report.status, 1, "status");
+    expectEq(texts(report, true), "File Not Found", "stderr");
+    let rec = render(parse_args(["/S", root + "/*.none"]).unwrap(), "/w", 80);
+    expectEq(texts(rec, false), "", "no header with /S");
+    expectEq(texts(rec, true), "File Not Found", "stderr with /S");
+    let path = render(parse_args([root + "/nodir/x"]).unwrap(), "/w", 80);
+    expectEq(texts(path, true), "The system cannot find the path specified.", "missing directory");
+    removeDir(root);
+}
