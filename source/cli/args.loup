@@ -1,8 +1,16 @@
 @mode(host.dual)
 
 # Command-line parsing for dir, with the shared Windows switch parser
-# (win/switches.loup). A `/X` that is not one of dir's switches is a path,
-# so `/tmp` and `/apps` stay paths while `/ad` is `/A` with `D`.
+# (win/switches.loup). A `/X` that is not one of dir's switches is a path, so
+# `/tmp` and `/apps` stay paths while `/ad` is `/A` with `D`.
+#
+# Runtime: host.dual. Compiled into the native binary build/dir by
+# `make build`; `loup run source/main.loup` interprets the same code.
+#
+# Structure: dir_switches() declares the switches (glued values only from the
+# allowed letters, which is what tells `/ad` from `/apps`); parse_args() then
+# folds them, in command-line order, into Options, checking each `/A`, `/O`
+# and `/T` value with valid_letters().
 
 from win.messages import (msg_parameter_format);
 from win.switches import (SwitchSpec, flag, optional_value, parse_switches, switch_error_message);

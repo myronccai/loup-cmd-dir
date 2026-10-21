@@ -1,10 +1,23 @@
 @mode(host.dual)
 
-# dir: lists the entries of directories in the Windows format. Operands
-# name a directory (list its contents), a file, or a wildcard pattern in a
-# directory; consecutive operands in the same directory share one block, as
-# in cmd. `render` builds every output line as a value; only `run_dir`
-# prints.
+# dir: lists the entries of directories in the Windows format. Operands name a
+# directory (list its contents), a file, or a wildcard pattern in a directory;
+# consecutive operands in the same directory share one block, as in cmd.
+#
+# Runtime: host.dual. Compiled into the native binary build/dir by
+# `make build`; `loup run source/main.loup` interprets the same code.
+# tests/dir_test.loup renders listings under Stage0 with a fixed current
+# directory; tests/e2e.sh checks the native build's output. With /S,
+# win.wildcard.walk_dirs runs `find` once per operand to skip symbolic links
+# to directories.
+#
+# Structure: three steps. plan_groups() turns the operands into Groups (a
+# directory and its patterns, or an error); render() lists every Group, with
+# collect() reading one directory, and builds a Report of every output line,
+# totals at the end, without printing; run_dir() asks the environment for the
+# current directory and the screen width, renders, and is the only function
+# that prints. The layout of each line is in commands/format.loup, filtering
+# and sorting in commands/entries.loup.
 
 from appinfo import (EXIT_OK, EXIT_FAILURE);
 from cli.args import (Options);
@@ -88,6 +101,8 @@ pub func plan_groups(operands: list[string]): list[Group] {
             groups.push(make_group(dir, none, MSG_PATH_NOT_FOUND));
             continue;
         }
+        # An operand in the same directory as the one before joins its
+        # block, as in cmd; the Group is rebuilt with one more pattern.
         let last = groups.len() - 1;
         if (last >= 0 and groups[last].error.len() == 0 and groups[last].dir == dir) {
             var patterns: list[string] = [];
@@ -211,6 +226,9 @@ pub func render(opts: Options, cwd: string, width: int): Report {
         for (d in dirs) {
             let abs = absolute_dir(d, cwd);
             let entries = collect(d, g.patterns, opts, abs == "/");
+            # Without /S an empty directory still gets its header and
+            # `File Not Found`; with /S it is skipped, and the message comes
+            # once, after the walk, if no directory matched at all.
             if (entries.len() == 0) {
                 if (!opts.recurse) {
                     if (!opts.bare) {
@@ -239,6 +257,8 @@ pub func render(opts: Options, cwd: string, width: int): Report {
             total_files += files;
             total_dirs += subdirs;
             total_bytes += bytes;
+            # A block: names only in bare format (full paths with /S), else
+            # the header, the entries and the block's File(s) line.
             if (opts.bare) {
                 for (e in entries) {
                     let name = shown_name(e.name, opts.lower);
@@ -269,6 +289,8 @@ pub func render(opts: Options, cwd: string, width: int): Report {
             status = EXIT_FAILURE;
         }
     }
+    # The grand total follows several blocks (or any /S listing); the
+    # Dir(s) line ends every listing that is not bare.
     if (!opts.bare and blocks > 0) {
         if (opts.recurse or blocks > 1) {
             for (t in total_header_lines()) {

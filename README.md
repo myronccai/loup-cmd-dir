@@ -198,7 +198,9 @@ found nothing, named a missing directory, or a switch value was invalid.
 - **Attributes**: only "directory" is known. Nothing is hidden or system, so
   the default listing shows dot-files and `/AH` finds nothing; `/A-H` shows
   everything. Symbolic links are listed as what they point to (no
-  `<SYMLINK>`/`<JUNCTION>`), and dangling ones are skipped.
+  `<SYMLINK>`/`<JUNCTION>`), and dangling ones are skipped. With `/S`, a
+  symbolic link to a directory is listed but not descended into: links can
+  loop, and Loup 1.26.0 has no `lstat()` to tell them apart otherwise.
 - **Sizes are read**: each file is read to learn its size (slow for huge
   files; skipped with `/B` unless sorting by size). An unreadable file
   stops dir with the toolchain's `IoError` message, which Loup 1.26.0

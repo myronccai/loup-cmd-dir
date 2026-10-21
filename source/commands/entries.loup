@@ -1,7 +1,11 @@
 @mode(host.dual)
 
-# Directory entries as dir lists them: the /A attribute filter and the /O
-# sort orders. Pure functions; nothing here touches the file system.
+# Directory entries as dir lists them: the /A attribute filter and the /O sort
+# orders. Pure functions; nothing here touches the file system.
+#
+# Runtime: host.dual. Compiled into the native binary build/dir by
+# `make build`; `loup run source/main.loup` interprets the same code, and
+# tests/entries_test.loup calls it under Stage0.
 
 from win.wildcard import (compare_names);
 
@@ -114,6 +118,8 @@ pub func sort_entries(entries: list[Entry], order: string): list[Entry] {
     if (order.len() == 0 or items.len() < 2) {
         return items;
     }
+    # Bottom-up: merge neighbouring runs of `width` entries, taking from the
+    # left run on ties (that keeps it stable), and double `width` each pass.
     var width = 1;
     while (width < items.len()) {
         var merged: list[Entry] = [];

@@ -3,6 +3,10 @@
 # The text of a dir listing: entry lines in the long and wide formats, the
 # "Directory of" header and the File(s) / Dir(s) summary lines, laid out in
 # Windows' columns. Pure functions.
+#
+# Runtime: host.dual. Compiled into the native binary build/dir by
+# `make build`; `loup run source/main.loup` interprets the same code, and
+# tests/format_test.loup calls it under Stage0.
 
 from commands.entries import (Entry);
 
