@@ -9,7 +9,8 @@
 # tests/dir_test.loup renders listings under Stage0 with a fixed current
 # directory; tests/e2e.sh checks the native build's output. With /S,
 # win.wildcard.walk_dirs runs `find` once per operand to skip symbolic links
-# to directories.
+# to directories. File sizes come from commands/filesize.loup, which asks C's
+# stdio in the native binary and reads the files in the interpreters.
 #
 # Structure: three steps. plan_groups() turns the operands into Groups (a
 # directory and its patterns, or an error); render() lists every Group, with
@@ -23,9 +24,10 @@
 from appinfo import (EXIT_OK, EXIT_FAILURE);
 from cli.args import (Options);
 from commands.entries import (Entry, make_entry, attr_matches, sort_entries);
+from commands.filesize import (file_size, interpreted);
 from commands.format import (DEFAULT_WIDTH, long_line, wide_lines, header_lines, files_line,
     dirs_line, total_header_lines, shown_name);
-from io.fs import (isDir, isFile, listDir, readBytes);
+from io.fs import (isDir, isFile, listDir);
 from win.messages import (MSG_FILE_NOT_FOUND_SHORT, MSG_INVALID_NAME, MSG_PATH_NOT_FOUND);
 from win.paths import (display_path, fs_path, is_absolute_path, join_path, path_components,
     split_path, strip_trailing_separators);
@@ -163,9 +165,11 @@ pub func matches_any(patterns: list[string], name: string): bool {
 
 # The entries of one directory that match the patterns and the /A filter:
 # `.` and `..` first (not in bare format, and not in the root directory),
-# then the rest in name order or the /O order. File sizes come from reading
-# the files; they are skipped in bare format unless /O sorts by size.
-pub func collect(dir: string, patterns: list[string], opts: Options, is_root: bool): list[Entry] {
+# then the rest in name order or the /O order. File sizes come from
+# file_size() (`by_reading`: read the files, the interpreters' way); they
+# are skipped in bare format unless /O sorts by size.
+pub func collect(dir: string, patterns: list[string], opts: Options, is_root: bool,
+    by_reading: bool): list[Entry] {
     let base = if (dir.len() == 0) { "." } else { dir };
     var out: list[Entry] = [];
     if (!isDir(base)) {
@@ -194,7 +198,7 @@ pub func collect(dir: string, patterns: list[string], opts: Options, is_root: bo
         }
         var size = 0;
         if (!is_dir and need_size) {
-            size = readBytes(path).len();
+            size = file_size(path, by_reading);
         }
         rest.push(make_entry(name, is_dir, size));
     }
@@ -246,6 +250,9 @@ pub func render(opts: Options, cwd: string, width: int): Report {
     var status = EXIT_OK;
     var blocks = 0;
     var grand = Tally(0, 0, 0);
+    # Asked once: whether sizes must be read (an interpreter) or can come
+    # from C (the native binary); see commands/filesize.loup.
+    let by_reading = interpreted();
 
     # The two kinds of line: say() for standard output, fail() for a message
     # on standard error, which also makes the exit status 1.
@@ -270,7 +277,7 @@ pub func render(opts: Options, cwd: string, width: int): Report {
         var found = 0;
         for (d in dirs) {
             let abs = absolute_dir(d, cwd);
-            let entries = collect(d, g.patterns, opts, abs == "/");
+            let entries = collect(d, g.patterns, opts, abs == "/", by_reading);
             # Without /S an empty directory still gets its header and
             # `File Not Found`; with /S it is skipped, and the message comes
             # once, after the walk, if no directory matched at all.

@@ -35,6 +35,7 @@ mistakes. Load those only as needed.
 │   ├── commands/
 │   │   ├── entries.loup         # Entry, attr_matches(), compare_entries(), sort_entries()
 │   │   ├── format.loup          # long_line(), wide_lines(), header and summary lines
+│   │   ├── filesize.loup        # file_size(): C's stdio natively, reading in the interpreters
 │   │   └── dir.loup             # plan_groups(), collect(), render(), current_dir(), run_dir()
 │   └── win/                     # shared Windows code (a copy; see below)
 │       ├── switches.loup        # cmd switch parser: /S -s /A:H /AH /T 10 /S/Q /? --

@@ -201,10 +201,14 @@ found nothing, named a missing directory, or a switch value was invalid.
   `<SYMLINK>`/`<JUNCTION>`), and dangling ones are skipped. With `/S`, a
   symbolic link to a directory is listed but not descended into: links can
   loop, and Loup 1.26.0 has no `lstat()` to tell them apart otherwise.
-- **Sizes are read**: each file is read to learn its size (slow for huge
-  files; skipped with `/B` unless sorting by size). An unreadable file
-  stops dir with the toolchain's `IoError` message, which Loup 1.26.0
-  cannot catch natively.
+- **How sizes are found depends on how dir runs** (Loup 1.26.0 has no
+  `stat()`). The native binary (`make build`) asks C's stdio (`fopen`,
+  `fseek`, `ftell`) and reads nothing; a file it may not read is measured
+  with `stat -L -c %s`. Run from source (`make run`, or the unit tests),
+  dir reads each file to learn its size, since the interpreters cannot call
+  C: slow for huge files, and an unreadable file stops dir with the
+  toolchain's `IoError` message. Sizes are skipped with `/B` unless
+  sorting by size.
 - `/P` (pause), `/Q` (owner), `/R` (streams), `/X` (short names) and `/N`
   are accepted and ignored; the `DIRCMD` variable is not read, and the only
   negated switch is `/-C`.
@@ -226,6 +230,7 @@ source/cli/usage.loup          # /? and --version text
 source/cli/app.loup            # run(): parse, dispatch, exit status
 source/commands/entries.loup   # Entry, the /A filter, the /O sort (stable merge sort)
 source/commands/format.loup    # columns, wide format, header and summary lines
+source/commands/filesize.loup  # file sizes: C's stdio natively, reading in the interpreters
 source/commands/dir.loup       # operands to blocks, collecting entries, render(), run_dir()
 source/win/                    # shared Windows code: switches, wildcards, paths, messages
 tests/*_test.loup              # unit tests (make test)

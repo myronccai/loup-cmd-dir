@@ -1,0 +1,86 @@
+@mode(host.dual)
+
+# File sizes for dir's listings, without reading the files where the lane
+# allows it. Loup 1.26.0 has no stat(), and in a native build every
+# readBytes() result stays allocated until the program ends: reading each
+# file to learn its size made `dir /S` over /usr/lib grow to 24 GB.
+#
+# Runtime: host.dual, but the two lanes take different paths. In the native
+# binary build/dir (`make build`) the size comes from C's stdio, declared
+# with `extern native "c"`: fopen, fseek to the end, ftell, fclose; nothing
+# is read. A file that cannot be opened (no read permission) is measured by
+# `stat -L -c %s` instead. The interpreters cannot call C: `make run` (`loup
+# run source/main.loup`) and Stage0's test runner stop at the first C call,
+# and that failure cannot be caught. There the file is read and measured, as
+# before, and an unreadable file still ends the run with IoError.
+#
+# Structure: interpreted() tells the lanes apart; stdio_size() and
+# stat_size() are the native paths; file_size() picks one. Which lane is
+# running cannot be asked directly in Loup 1.26.0: a build option read with
+# `if const (options.*)` exists only in `loup build`, and both interpreters
+# reject it. So interpreted() looks at the running program's name, which is
+# `loup` or `loup-bootstrap` for the interpreters. A wrong answer is only
+# safe one way, so anything unclear counts as interpreted: reading works in
+# every lane.
+
+from io.fs import (isFile);
+from win.switches import (parse_int_value);
+
+extern native "c" func access(path: string, mode: int32): int32;
+extern native "c" func fopen(path: string, mode: string): NativeHandle;
+extern native "c" func fseek(f: NativeHandle, offset: int, whence: int32): int32;
+extern native "c" func ftell(f: NativeHandle): int;
+extern native "c" func fclose(f: NativeHandle): int32;
+
+const R_OK: int = 4;
+const SEEK_END: int = 2;
+
+# Whether this process is a Loup interpreter running the source, rather than
+# the compiled binary: true when /proc/self/comm names a `loup...` program,
+# or cannot be read. Ask once, not per file.
+pub func interpreted(): bool {
+    let comm = "/proc/self/comm";
+    if (!isFile(comm)) {
+        return true;
+    }
+    return readText(comm).startsWith("loup");
+}
+
+# The size of a readable file through C's stdio, or -1 when it cannot be
+# opened (a NULL handle cannot be tested, so access() is asked first).
+# Native binary only.
+func stdio_size(path: string): int {
+    if (access(path, R_OK as int32) != (0 as int32)) {
+        return -1;
+    }
+    let f = fopen(path, "rb");
+    fseek(f, 0, SEEK_END as int32);
+    let size = ftell(f);
+    fclose(f);
+    return size;
+}
+
+# The size `stat -L -c %s` reports (following a symbolic link, as isFile()
+# and fopen() do), for a file C cannot open; 0 if stat cannot tell. (exec's
+# result must be read in the function that called it.)
+func stat_size(path: string): int {
+    let r = exec(["stat", "-L", "-c", "%s", "--", path]);
+    if (r.exit_code != 0) {
+        return 0;
+    }
+    return parse_int_value(r.stdout.to_string().trim()) ?? 0;
+}
+
+# The size in bytes of the regular file at `path`. `by_reading` is what
+# interpreted() answered: true reads the file (the interpreters' only way),
+# false asks C's stdio, then stat.
+pub func file_size(path: string, by_reading: bool): int {
+    if (by_reading) {
+        return readBytes(path).len();
+    }
+    let size = stdio_size(path);
+    if (size >= 0) {
+        return size;
+    }
+    return stat_size(path);
+}

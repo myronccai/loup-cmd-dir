@@ -14,6 +14,7 @@ from cli.args import (parse_args);
 from commands.dir import (OutLine, Report, Tally, plan_groups, normalize_absolute, absolute_dir,
     matches_any, collect, render, tally_of);
 from commands.entries import (make_entry);
+from commands.filesize import (file_size, interpreted);
 from win.messages import (MSG_INVALID_NAME, MSG_PATH_NOT_FOUND);
 
 func make_tree(root: string): void {
@@ -72,16 +73,16 @@ func test_matches_any(): void {
 func test_collect(): void {
     let root = "build/tmp/dir_collect";
     make_tree(root);
-    let all = collect(root, ["*"], parse_args(["/O-N"]).unwrap(), false);
+    let all = collect(root, ["*"], parse_args(["/O-N"]).unwrap(), false, true);
     var names: list[string] = [];
     for (e in all) {
         names.push(e.name);
     }
     expectEq(names.join(","), ".,..,sub,B.log,a.txt", "dots first, then the /O order");
     expectEq(all[3].size, 12, "size from the file");
-    let files = collect(root, ["*"], parse_args(["/A-D", "/B"]).unwrap(), false);
+    let files = collect(root, ["*"], parse_args(["/A-D", "/B"]).unwrap(), false, true);
     expectEq(files.len(), 2, "/A-D and no dots in bare format");
-    let at_root = collect(root, ["*"], parse_args(["/AD"]).unwrap(), true);
+    let at_root = collect(root, ["*"], parse_args(["/AD"]).unwrap(), true, true);
     expectEq(at_root.len(), 1, "no dots in the root directory");
     removeDir(root);
 }
@@ -133,4 +134,14 @@ func test_tallies_add_up(): void {
     expectEq(grand.files, 3, "files added");
     expectEq(grand.dirs, 3, "directories added");
     expectEq(grand.bytes, 13, "bytes added");
+}
+
+# The unit tests run under Stage0, an interpreter, so sizes are read there;
+# the C path is exercised by tests/e2e.sh against the native binary.
+func test_file_size_by_reading(): void {
+    let root = "build/tmp/dir_size";
+    make_tree(root);
+    expect(interpreted(), "the test runner is an interpreter");
+    expectEq(file_size(root + "/B.log", true), 12, "read and measured");
+    removeDir(root);
 }

@@ -326,6 +326,21 @@ $(fs 1 5)
 $(ds 0)
 "                                                               'sub\deep\*.log'
 
+# Natively a size comes from C's stdio; a file that may not be read is
+# measured with `stat` (before, dir stopped there with IoError). Run as
+# root, the file is readable anyway and the output is the same.
+mkdir -p "$TMP/locked"
+printf 'secret\n' > "$TMP/locked/secret.txt"
+chmod 000 "$TMP/locked/secret.txt"
+LD="${TMP//\//\\}\\locked"
+check      "unreadable file"    0 "$(hdr "$LD")
+
+$(f 7 secret.txt)
+$(fs 1 7)
+$(ds 0)
+"                                                               "$TMP/locked/secret.txt"
+chmod 600 "$TMP/locked/secret.txt"
+
 # The root directory has no . and .. entries.
 if "$BIN" '\' /AD | grep -q ' \.\.\?$'; then
     fail=$((fail + 1)); echo "FAIL: root without dots"
