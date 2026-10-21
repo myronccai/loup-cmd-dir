@@ -8,8 +8,8 @@
 # test per `func test_*()`. It is not part of the binary.
 
 from debug.assert import (expect, expectEq);
-from commands.entries import (Entry, make_entry, attr_matches, extension_of, order_keys,
-    compare_entries, merge_sort, sort_entries);
+from commands.entries import (Entry, make_entry, attr_matches, extension_of, compare_entries,
+    merge_sort, sort_entries);
 
 func names(entries: list[Entry]): string {
     var out: list[string] = [];
@@ -50,11 +50,11 @@ func test_extension_of(): void {
 func test_compare_entries(): void {
     let a = make_entry("a.txt", false, 30);
     let d = make_entry("docs", true, 0);
-    expect(compare_entries(a, d, order_keys("N")) < 0, "by name");
-    expect(compare_entries(a, d, order_keys("G")) > 0, "directories first");
-    expect(compare_entries(a, d, order_keys("-G")) < 0, "directories last");
-    expect(compare_entries(a, a, order_keys("NSEG")) == 0, "equal");
-    expect(compare_entries(a, d, order_keys("D")) == 0, "no dates");
+    expect(compare_entries(a, d, "N") < 0, "by name");
+    expect(compare_entries(a, d, "G") > 0, "directories first");
+    expect(compare_entries(a, d, "-G") < 0, "directories last");
+    expect(compare_entries(a, a, "NSEG") == 0, "equal");
+    expect(compare_entries(a, d, "D") == 0, "no dates");
 }
 
 func test_sort_orders(): void {

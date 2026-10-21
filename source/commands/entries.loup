@@ -3,9 +3,8 @@
 # Directory entries as dir lists them: the /A attribute filter and the /O sort
 # orders. Pure functions; nothing here touches the file system.
 #
-# Structure: attr_matches() filters; order_keys() turns an /O value into a
-# list of comparison functions, compare_entries() applies them in turn, and
-# the generic merge_sort() sorts with them.
+# Structure: attr_matches() filters; compare_entries() compares two entries by
+# an /O value, and the generic merge_sort() sorts with it.
 #
 # Runtime: host.dual. Compiled into the native binary build/dir by
 # `make build`; `loup run source/main.loup` interprets the same code, and
@@ -93,33 +92,22 @@ pub func compare_by_key(a: Entry, b: Entry, key: string): int {
     return 0;
 }
 
-# The comparisons an /O value such as "GN" or "-S" stands for, one function
-# per key in order; `-` reverses the key that follows it. The value is
-# parsed once, here, not on every comparison.
-pub func order_keys(order: string): list[fn(Entry, Entry): int] {
-    var keys: list[fn(Entry, Entry): int] = [];
+# Compares two entries by a whole /O value such as "GN" or "-S": each key
+# in turn, `-` reversing the key that follows it. (Not a list of comparison
+# functions: natively each call through a function value taken from a list
+# allocates, which made `dir /O:EN` over 3,200 names 40% bigger.)
+pub func compare_entries(a: Entry, b: Entry, order: string): int {
     var negate = false;
     for (key in order) {
         if (key == "-") {
             negate = true;
             continue;
         }
-        let k = key;
-        let factor = if (negate) { -1 } else { 1 };
-        keys.push(func(a: Entry, b: Entry): int { return factor * compare_by_key(a, b, k); });
-        negate = false;
-    }
-    return keys;
-}
-
-# Compares two entries by each key in turn: the first that tells them apart
-# decides.
-pub func compare_entries(a: Entry, b: Entry, keys: list[fn(Entry, Entry): int]): int {
-    for (key in keys) {
-        let c = key(a, b);
+        let c = compare_by_key(a, b, key);
         if (c != 0) {
-            return c;
+            return if (negate) { 0 - c } else { c };
         }
+        negate = false;
     }
     return 0;
 }
@@ -168,6 +156,5 @@ pub func sort_entries(entries: list[Entry], order: string): list[Entry] {
     if (order.len() == 0) {
         return items;
     }
-    let keys = order_keys(order);
-    return merge_sort(items, func(a: Entry, b: Entry): int { return compare_entries(a, b, keys); });
+    return merge_sort(items, func(a: Entry, b: Entry): int { return compare_entries(a, b, order); });
 }

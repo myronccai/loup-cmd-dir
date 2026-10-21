@@ -9,7 +9,6 @@
 # tests/format_test.loup calls it under Stage0.
 
 from commands.entries import (Entry);
-from core.string_utils import (padLeft, padRight);
 
 # Where the date and time would be: "MM/DD/YYYY  HH:MM AM" is 20 columns.
 # Loup 1.26.0 has no stat(), so the columns are left blank.
@@ -17,6 +16,36 @@ pub const DATE_TIME_BLANK: string = "                    ";
 
 # The default screen width for /W and /D.
 pub const DEFAULT_WIDTH: int = 80;
+
+# `count` spaces.
+pub func spaces(count: int): string {
+    var parts: list[string] = [];
+    for (i in 0..count) {
+        parts.push(" ");
+    }
+    return parts.join("");
+}
+
+# `text` right-aligned in `width` columns (never cut). Written here rather
+# than taken from core.string_utils: natively its padLeft/padRight cost
+# about 90 bytes per padding character, never freed, which doubled the
+# memory of a /W listing of 3,200 names.
+pub func pad_left(text: string, width: int): string {
+    let n = text.len();
+    if (n >= width) {
+        return text;
+    }
+    return spaces(width - n) + text;
+}
+
+# `text` left-aligned in `width` columns (never cut).
+pub func pad_right(text: string, width: int): string {
+    let n = text.len();
+    if (n >= width) {
+        return text;
+    }
+    return text + spaces(width - n);
+}
 
 # A count or size as dir prints it: `1,234,567` with separators (/C, the
 # default), `1234567` without (/-C).
@@ -48,9 +77,9 @@ pub func shown_name(name: string, lower: bool): string {
 pub func long_line(e: Entry, separators: bool, lower: bool): string {
     var field = "";
     if (e.is_dir) {
-        field = padRight("<DIR>", 14, " ");
+        field = pad_right("<DIR>", 14);
     } else {
-        field = padLeft(group_digits(e.size, separators), 14, " ");
+        field = pad_left(group_digits(e.size, separators), 14);
     }
     return DATE_TIME_BLANK + "    " + field + " " + shown_name(e.name, lower);
 }
@@ -97,7 +126,7 @@ pub func wide_lines(entries: list[Entry], width: int, by_column: bool, lower: bo
             if (index >= count) {
                 break;
             }
-            parts.push(padRight(names[index], longest + 1, " "));
+            parts.push(pad_right(names[index], longest + 1));
         }
         lines.push(parts.join(""));
     }
@@ -112,14 +141,14 @@ pub func header_lines(display: string): list[string] {
 
 # `               2 File(s)          1,234 bytes`
 pub func files_line(count: int, total: int, separators: bool): string {
-    return padLeft(group_digits(count, separators), 16, " ") + " File(s) "
-        + padLeft(group_digits(total, separators), 14, " ") + " bytes";
+    return pad_left(group_digits(count, separators), 16) + " File(s) "
+        + pad_left(group_digits(total, separators), 14) + " bytes";
 }
 
 # `               3 Dir(s)`: Windows adds the free space of the volume,
 # which Loup 1.26.0 cannot query.
 pub func dirs_line(count: int, separators: bool): string {
-    return padLeft(group_digits(count, separators), 16, " ") + " Dir(s)";
+    return pad_left(group_digits(count, separators), 16) + " Dir(s)";
 }
 
 # The lines that introduce the grand total after several blocks (or /S).
