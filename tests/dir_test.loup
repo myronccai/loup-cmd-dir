@@ -11,8 +11,9 @@
 from debug.assert import (expect, expectEq);
 from io.fs import (createDir, writeText, removeDir, isDir);
 from cli.args import (parse_args);
-from commands.dir import (OutLine, Report, plan_groups, normalize_absolute, absolute_dir,
-    matches_any, collect, render);
+from commands.dir import (OutLine, Report, Tally, plan_groups, normalize_absolute, absolute_dir,
+    matches_any, collect, render, tally_of);
+from commands.entries import (make_entry);
 from win.messages import (MSG_INVALID_NAME, MSG_PATH_NOT_FOUND);
 
 func make_tree(root: string): void {
@@ -121,4 +122,15 @@ func test_render_not_found(): void {
     let path = render(parse_args([root + "/nodir/x"]).unwrap(), "/w", 80);
     expectEq(texts(path, true), "The system cannot find the path specified.", "missing directory");
     removeDir(root);
+}
+
+func test_tallies_add_up(): void {
+    let block = tally_of([make_entry(".", true, 0), make_entry("a.txt", false, 6), make_entry("b", false, 4)]);
+    expectEq(block.files, 2, "files");
+    expectEq(block.dirs, 1, "directories");
+    expectEq(block.bytes, 10, "bytes");
+    let grand = Tally(1, 2, 3) + block;
+    expectEq(grand.files, 3, "files added");
+    expectEq(grand.dirs, 3, "directories added");
+    expectEq(grand.bytes, 13, "bytes added");
 }

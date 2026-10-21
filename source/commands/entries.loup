@@ -3,6 +3,10 @@
 # Directory entries as dir lists them: the /A attribute filter and the /O sort
 # orders. Pure functions; nothing here touches the file system.
 #
+# Structure: attr_matches() filters; order_keys() turns an /O value into a
+# list of comparison functions, compare_entries() applies them in turn, and
+# the generic merge_sort() sorts with them.
+#
 # Runtime: host.dual. Compiled into the native binary build/dir by
 # `make build`; `loup run source/main.loup` interprets the same code, and
 # tests/entries_test.loup calls it under Stage0.
@@ -89,59 +93,81 @@ pub func compare_by_key(a: Entry, b: Entry, key: string): int {
     return 0;
 }
 
-# Compares two entries by a whole /O value such as "GN" or "-S": each key
-# in turn, `-` reversing the key that follows it.
-pub func compare_entries(a: Entry, b: Entry, order: string): int {
+# The comparisons an /O value such as "GN" or "-S" stands for, one function
+# per key in order; `-` reverses the key that follows it. The value is
+# parsed once, here, not on every comparison.
+pub func order_keys(order: string): list[fn(Entry, Entry): int] {
+    var keys: list[fn(Entry, Entry): int] = [];
     var negate = false;
     for (key in order) {
         if (key == "-") {
             negate = true;
             continue;
         }
-        let c = compare_by_key(a, b, key);
-        if (c != 0) {
-            return if (negate) { 0 - c } else { c };
-        }
+        let k = key;
+        let factor = if (negate) { -1 } else { 1 };
+        keys.push(func(a: Entry, b: Entry): int { return factor * compare_by_key(a, b, k); });
         negate = false;
+    }
+    return keys;
+}
+
+# Compares two entries by each key in turn: the first that tells them apart
+# decides.
+pub func compare_entries(a: Entry, b: Entry, keys: list[fn(Entry, Entry): int]): int {
+    for (key in keys) {
+        let c = key(a, b);
+        if (c != 0) {
+            return c;
+        }
     }
     return 0;
 }
 
-# Sorts entries by an /O value with a stable merge sort, so entries that
-# compare equal keep their name order. (Written by hand: a sort comparator
-# that captures a list of structs crashes native builds.)
-pub func sort_entries(entries: list[Entry], order: string): list[Entry] {
-    var items: list[Entry] = [];
-    for (e in entries) {
-        items.push(e);
-    }
-    if (order.len() == 0 or items.len() < 2) {
-        return items;
-    }
-    # Bottom-up: merge neighbouring runs of `width` entries, taking from the
-    # left run on ties (that keeps it stable), and double `width` each pass.
+# A stable merge sort of any list: items that compare equal keep their
+# order. Bottom-up: merge neighbouring runs of `width` items, taking from
+# the left run on ties, and double `width` each pass. (Written by hand: a
+# list.sort comparator that captures a list of structs crashes native
+# builds.)
+pub func merge_sort[T](items: list[T], cmp: fn(T, T): int): list[T] {
+    var run = items;
+    let n = run.len();
     var width = 1;
-    while (width < items.len()) {
-        var merged: list[Entry] = [];
+    while (width < n) {
+        var merged: list[T] = [];
         var lo = 0;
-        while (lo < items.len()) {
-            let mid = if (lo + width < items.len()) { lo + width } else { items.len() };
-            let hi = if (lo + 2 * width < items.len()) { lo + 2 * width } else { items.len() };
+        while (lo < n) {
+            let mid = if (lo + width < n) { lo + width } else { n };
+            let hi = if (lo + 2 * width < n) { lo + 2 * width } else { n };
             var i = lo;
             var j = mid;
             while (i < mid or j < hi) {
-                if (j >= hi or (i < mid and compare_entries(items[i], items[j], order) <= 0)) {
-                    merged.push(items[i]);
+                if (j >= hi or (i < mid and cmp(run[i], run[j]) <= 0)) {
+                    merged.push(run[i]);
                     i += 1;
                 } else {
-                    merged.push(items[j]);
+                    merged.push(run[j]);
                     j += 1;
                 }
             }
             lo = hi;
         }
-        items = merged;
+        run = merged;
         width = width * 2;
     }
-    return items;
+    return run;
+}
+
+# Sorts entries by an /O value; entries that compare equal keep their name
+# order. An empty value keeps the order as it is.
+pub func sort_entries(entries: list[Entry], order: string): list[Entry] {
+    var items: list[Entry] = [];
+    for (e in entries) {
+        items.push(e);
+    }
+    if (order.len() == 0) {
+        return items;
+    }
+    let keys = order_keys(order);
+    return merge_sort(items, func(a: Entry, b: Entry): int { return compare_entries(a, b, keys); });
 }

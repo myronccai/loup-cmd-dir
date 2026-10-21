@@ -11,25 +11,24 @@ from appinfo import (APP_NAME, APP_VERSION);
 # The text of `dir /?`: a short summary of this recreation's syntax and
 # switches.
 pub func usage(): string {
-    let lines = [
-        "List the files and subdirectories of a directory.",
-        "",
-        "DIR [path][pattern] [/A[[:]attrs]] [/B] [/C | /-C] [/D] [/L] [/O[[:]order]]",
-        "    [/S] [/W] [/N] [/P] [/Q] [/R] [/T[[:]field]] [/X] [/4]",
-        "",
-        "  path, pattern  What to list: a directory, a file, or a name with * and ?.",
-        "  /A[attrs]      Filter by attribute: D = directories, -D = files.",
-        "  /B             Names only, without header or totals.",
-        "  /C, /-C        Group digits with commas (the default), or not.",
-        "  /D             Like /W, ordered down the columns.",
-        "  /L             Print names in lower case.",
-        "  /O[order]      Sort: N name, E extension, S size, G folders first;",
-        "                 a - before a letter reverses it. /O alone means /OGN.",
-        "  /S             Include every subdirectory.",
-        "  /W             Several names per line.",
-        "  /N /P /Q /R /T /X /4  Accepted for compatibility; they change nothing.",
-    ];
-    return lines.join("\n");
+    return """
+    List the files and subdirectories of a directory.
+
+    DIR [path][pattern] [/A[[:]attrs]] [/B] [/C | /-C] [/D] [/L] [/O[[:]order]]
+        [/S] [/W] [/N] [/P] [/Q] [/R] [/T[[:]field]] [/X] [/4]
+
+      path, pattern  What to list: a directory, a file, or a name with * and ?.
+      /A[attrs]      Filter by attribute: D = directories, -D = files.
+      /B             Names only, without header or totals.
+      /C, /-C        Group digits with commas (the default), or not.
+      /D             Like /W, ordered down the columns.
+      /L             Print names in lower case.
+      /O[order]      Sort: N name, E extension, S size, G folders first;
+                     a - before a letter reverses it. /O alone means /OGN.
+      /S             Include every subdirectory.
+      /W             Several names per line.
+      /N /P /Q /R /T /X /4  Accepted for compatibility; they change nothing.
+    """;
 }
 
 pub func version_line(): string {

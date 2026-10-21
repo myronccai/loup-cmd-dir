@@ -9,7 +9,7 @@
 
 from debug.assert import (expect, expectEq);
 from commands.entries import (make_entry);
-from commands.format import (group_digits, pad_left, pad_right, long_line, wide_lines,
+from commands.format import (group_digits, long_line, wide_lines,
     header_lines, files_line, dirs_line, total_header_lines, DATE_TIME_BLANK);
 
 func test_group_digits(): void {
@@ -21,10 +21,10 @@ func test_group_digits(): void {
     expectEq(group_digits(1234567, false), "1234567", "/-C");
 }
 
-func test_padding(): void {
-    expectEq(pad_left("7", 3), "  7", "left");
-    expectEq(pad_right("7", 3), "7  ", "right");
-    expectEq(pad_left("1234", 3), "1234", "never cut");
+func test_columns_are_padded_never_cut(): void {
+    expectEq(files_line(7, 0, true), "               7 File(s)              0 bytes", "padded");
+    let huge = long_line(make_entry("x", false, 123456789012345678), true, false);
+    expect(huge.endsWith(" 123,456,789,012,345,678 x"), "a size wider than its column is kept whole");
 }
 
 func test_long_lines(): void {

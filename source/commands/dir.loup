@@ -13,8 +13,9 @@
 #
 # Structure: three steps. plan_groups() turns the operands into Groups (a
 # directory and its patterns, or an error); render() lists every Group, with
-# collect() reading one directory, and builds a Report of every output line,
-# totals at the end, without printing; run_dir() asks the environment for the
+# collect() reading one directory, and builds a Report of every output line
+# without printing: its nested say() and fail() add the lines, and the totals
+# are Tally values added up with `+`; run_dir() asks the environment for the
 # current directory and the screen width, renders, and is the only function
 # that prints. The layout of each line is in commands/format.loup, filtering
 # and sorting in commands/entries.loup.
@@ -203,19 +204,63 @@ pub func collect(dir: string, patterns: list[string], opts: Options, is_root: bo
     return out;
 }
 
+# The counts behind a File(s) / Dir(s) summary: files, directories and the
+# bytes in the files. Tallies add up with `+`: the grand total of a listing
+# is the sum of its blocks' tallies.
+pub class Tally implements Add[Tally, Tally] {
+    pub let files: int;
+    pub let dirs: int;
+    pub let bytes: int;
+
+    new(files: int, dirs: int, bytes: int) {
+        this.files = files;
+        this.dirs = dirs;
+        this.bytes = bytes;
+    }
+
+    pub operator func +(o: Tally): Tally {
+        return Tally(this.files + o.files, this.dirs + o.dirs, this.bytes + o.bytes);
+    }
+}
+
+# The tally of one block's entries (`.` and `..` count as directories).
+pub func tally_of(entries: list[Entry]): Tally {
+    var files = 0;
+    var dirs = 0;
+    var bytes = 0;
+    for (e in entries) {
+        if (e.is_dir) {
+            dirs += 1;
+        } else {
+            files += 1;
+            bytes += e.size;
+        }
+    }
+    return Tally(files, dirs, bytes);
+}
+
 # Builds the whole listing. `cwd` is the absolute current directory ("" if
 # unknown) and `width` the screen width for /W and /D.
 pub func render(opts: Options, cwd: string, width: int): Report {
     var lines: list[OutLine] = [];
     var status = EXIT_OK;
     var blocks = 0;
-    var total_files = 0;
-    var total_dirs = 0;
-    var total_bytes = 0;
+    var grand = Tally(0, 0, 0);
+
+    # The two kinds of line: say() for standard output, fail() for a message
+    # on standard error, which also makes the exit status 1.
+    func say(text: string): void {
+        lines.push(out_line(text));
+    }
+    func fail(message: string): void {
+        nonlocal status;
+        lines.push(err_line(message));
+        status = EXIT_FAILURE;
+    }
+
     for (g in plan_groups(opts.operands)) {
         if (g.error.len() > 0) {
-            lines.push(err_line(g.error));
-            status = EXIT_FAILURE;
+            fail(g.error);
             continue;
         }
         var dirs: list[string] = [g.dir];
@@ -233,60 +278,46 @@ pub func render(opts: Options, cwd: string, width: int): Report {
                 if (!opts.recurse) {
                     if (!opts.bare) {
                         for (h in header_lines(display_path(abs))) {
-                            lines.push(out_line(h));
+                            say(h);
                         }
                     }
-                    lines.push(err_line(MSG_FILE_NOT_FOUND_SHORT));
-                    status = EXIT_FAILURE;
+                    fail(MSG_FILE_NOT_FOUND_SHORT);
                 }
                 continue;
             }
             found += 1;
             blocks += 1;
-            var files = 0;
-            var subdirs = 0;
-            var bytes = 0;
-            for (e in entries) {
-                if (e.is_dir) {
-                    subdirs += 1;
-                } else {
-                    files += 1;
-                    bytes += e.size;
-                }
-            }
-            total_files += files;
-            total_dirs += subdirs;
-            total_bytes += bytes;
+            let block = tally_of(entries);
+            grand = grand + block;
             # A block: names only in bare format (full paths with /S), else
             # the header, the entries and the block's File(s) line.
             if (opts.bare) {
                 for (e in entries) {
                     let name = shown_name(e.name, opts.lower);
                     if (opts.recurse) {
-                        lines.push(out_line(display_path(join_path(abs, name))));
+                        say(display_path(join_path(abs, name)));
                     } else {
-                        lines.push(out_line(name));
+                        say(name);
                     }
                 }
                 continue;
             }
             for (h in header_lines(display_path(abs))) {
-                lines.push(out_line(h));
+                say(h);
             }
             if (opts.wide) {
                 for (w in wide_lines(entries, width, opts.by_column, opts.lower)) {
-                    lines.push(out_line(w));
+                    say(w);
                 }
             } else {
                 for (e in entries) {
-                    lines.push(out_line(long_line(e, opts.separators, opts.lower)));
+                    say(long_line(e, opts.separators, opts.lower));
                 }
             }
-            lines.push(out_line(files_line(files, bytes, opts.separators)));
+            say(files_line(block.files, block.bytes, opts.separators));
         }
         if (opts.recurse and found == 0) {
-            lines.push(err_line(MSG_FILE_NOT_FOUND_SHORT));
-            status = EXIT_FAILURE;
+            fail(MSG_FILE_NOT_FOUND_SHORT);
         }
     }
     # The grand total follows several blocks (or any /S listing); the
@@ -294,11 +325,11 @@ pub func render(opts: Options, cwd: string, width: int): Report {
     if (!opts.bare and blocks > 0) {
         if (opts.recurse or blocks > 1) {
             for (t in total_header_lines()) {
-                lines.push(out_line(t));
+                say(t);
             }
-            lines.push(out_line(files_line(total_files, total_bytes, opts.separators)));
+            say(files_line(grand.files, grand.bytes, opts.separators));
         }
-        lines.push(out_line(dirs_line(total_dirs, opts.separators)));
+        say(dirs_line(grand.dirs, opts.separators));
     }
     return Report(lines = lines, status = status);
 }
@@ -337,12 +368,10 @@ pub func current_dir(): string {
 
 # The screen width for /W and /D: $COLUMNS when it is a number, else 80.
 pub func screen_width(): int {
-    let text = env("COLUMNS") ?? "";
-    let n = parse_int_value(text) ?? 0;
-    if (n >= 10) {
-        return n;
-    }
-    return DEFAULT_WIDTH;
+    return match parse_int_value(env("COLUMNS") ?? "") {
+        Some(n) if (n >= 10) => n,
+        _ => DEFAULT_WIDTH,
+    };
 }
 
 pub func run_dir(opts: Options): int {
